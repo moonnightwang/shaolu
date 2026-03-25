@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%233b82f6' stroke='white' stroke-width='2'/%3E%3Ctext x='50' y='72' font-size='55' text-anchor='middle' fill='white' font-weight='bold' font-family='Arial'%3EB%3C/text%3E%3C/svg%3E">
+    <title>星途科技 · 蓝牙 一键烧录工具</title>
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <style>
+        .transition-all { transition: all 0.3s ease; }
+        #copy-toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-connected { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-disconnected { background-color: #ef4444; }
+        .log-container {
+            background-color: #1e293b;
+            color: #e2e8f0;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            max-height: 180px;
+            overflow-y: auto;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .log-entry { margin-bottom: 3px; border-bottom: 1px solid #334155; padding-bottom: 3px; word-break: break-all; white-space: pre-wrap; }
+        .log-send { color: #fbbf24; display: none; } /* 隐藏发送日志 */
+        .log-receive { color: #60a5fa; display: none; }
+        .log-success { color: #34d399; }
+        .log-error { color: #f87171; }
+        .log-info { color: #94a3b8; }
+        .log-warning { color: #fbbf24; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-flash-idle { background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); }
+        .btn-flash-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .btn-flash-error { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+        .step-container { display: flex; align-items: center; justify-content: space-between; margin: 15px 0; padding: 0 5px; }
+        .step-item { display: flex; flex-direction: column; align-items: center; flex: 1; position: relative; }
+        .step-circle {
+            width: 32px; height: 32px; border-radius: 50%; background-color: #e5e7eb;
+            display: flex; align-items: center; justify-content: center; font-size: 14px;
+            font-weight: bold; color: #6b7280; margin-bottom: 5px; z-index: 2; transition: all 0.2s;
+        }
+        .step-circle.active { background-color: #3b82f6; color: white; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3); animation: pulse 1.5s infinite; }
+        .step-circle.completed { background-color: #10b981; color: white; }
+        .step-circle.error { background-color: #ef4444; color: white; }
+        .step-line { position: absolute; top: 16px; left: -50%; width: 100%; height: 2px; background-color: #e5e7eb; z-index: 1; }
+        .step-item:first-child .step-line { display: none; }
+        .progress-bar { height: 8px; background-color: #e5e7eb; border-radius: 4px; overflow: hidden; margin: 15px 0; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.5s ease; border-radius: 4px; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+        #customCommandInput { font-family: monospace; }
+        .auto-reconnect-badge {
+            font-size: 10px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 12px;
+            padding: 2px 8px;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 min-h-screen flex items-center justify-center">
+    <div class="max-w-5xl w-full bg-white rounded-xl shadow-xl overflow-hidden">
+        <div class="bg-gradient-to-r from-blue-700 to-blue-900 text-white px-6 py-3">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-xl font-bold flex items-center">
+                        <i class="fab fa-bluetooth-b mr-2"></i>
+                        星途科技 · 蓝牙 一键烧录工具
+                                            </h1>
+                </div>
+                <div class="flex items-center bg-white/20 px-3 py-1.5 rounded-full">
+                    <span class="status-indicator status-disconnected" id="statusIndicator"></span>
+                    <span id="statusText" class="text-sm font-medium">未连接</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col lg:flex-row">
+            <div class="lg:w-2/5 p-5 border-r border-gray-200">
+                <div class="mb-4">
+                    <h2 class="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                        <i class="fas fa-plug text-blue-600 mr-1 text-xs"></i>串口连接
+                    </h2>
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <button id="connectBtn" class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 flex items-center gap-1 transition">
+                                <i class="fas fa-search"></i> 连接设备
+                            </button>
+                            <button id="disconnectBtn" class="bg-gray-500 text-white px-4 py-1.5 rounded text-sm hover:bg-gray-600 flex items-center gap-1 transition" disabled>
+                                <i class="fas fa-power-off"></i> 断开
+                            </button>
+                        </div>
+                        <div id="portInfo" class="text-xs text-gray-500 mt-2 flex items-center">
+                            <i class="fas fa-info-circle mr-1"></i>点击连接，选择串口设备（支持热插拔自动重连）
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <h2 class="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                        <i class="fas fa-cog text-blue-600 mr-1 text-xs"></i>配置参数
+                    </h2>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                <i class="fas fa-bluetooth mr-1"></i>MAC地址
+                            </label>
+                            <input id="in-mac" class="w-full border border-gray-300 p-2 rounded text-sm font-mono" 
+                                value="30:AE:A4:A0:E2:7D" placeholder="30:AE:A4:A0:E2:7D">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">
+                                <i class="fas fa-database mr-1"></i>RAW数据
+                            </label>
+                            <textarea id="in-raw" rows="3" class="w-full border border-gray-300 p-2 rounded text-sm font-mono" 
+                                placeholder="请输入RAW数据">0x02010617FF0001B50002381EACC4000000120610A1DE011000000003033CFE</textarea>
+                            <div class="flex justify-end mt-1">
+                                <button onclick="window.clearRawField && window.clearRawField()" class="text-xs text-gray-500 hover:text-gray-700">
+                                    <i class="fas fa-trash-alt mr-1"></i>清空
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="step-container">
+                        <div class="step-item"><div class="step-circle" id="step1Circle">1</div><div class="step-line"></div></div>
+                        <div class="step-item"><div class="step-circle" id="step2Circle">2</div><div class="step-line"></div></div>
+                        <div class="step-item"><div class="step-circle" id="step3Circle">3</div><div class="step-line"></div></div>
+                        <div class="step-item"><div class="step-circle" id="step4Circle">4</div><div class="step-line"></div></div>
+                        <div class="step-item"><div class="step-circle" id="step5Circle">5</div><div class="step-line"></div></div>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <button id="flashBtn" class="w-full btn-flash-idle text-white py-3 rounded-lg font-bold text-lg mb-2 transition-all flex items-center justify-center shadow-md" disabled>
+                    <i class="fas fa-bolt mr-2"></i>
+                    <span id="flashBtnText">⚡ 一键智能烧录 ⚡</span>
+                </button>
+
+                <div class="flex gap-2">
+                    <button id="customCmdBtn" class="flex-1 bg-gray-500 text-white py-2 rounded text-sm hover:bg-gray-600 disabled:opacity-50" disabled>
+                        <i class="fas fa-terminal mr-1"></i>自定义命令
+                    </button>
+                    <button id="clearLogBtn" class="flex-1 bg-orange-500 text-white py-2 rounded text-sm hover:bg-orange-600">
+                        <i class="fas fa-trash-alt mr-1"></i>清除日志
+                    </button>
+                </div>
+                
+                <div id="customCommandPanel" class="mt-2 hidden">
+                    <div class="flex gap-2">
+                        <input type="text" id="customCommandInput" placeholder="输入AT命令 (如 AT+VER?)" class="flex-1 border border-gray-300 p-2 rounded text-sm font-mono">
+                        <button id="sendCustomBtn" class="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">发送</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:w-3/5 p-5 bg-gray-50">
+                <div>
+                    <h2 class="text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                        <i class="fas fa-terminal text-blue-600 mr-1 text-xs"></i>执行日志
+                    </h2>
+                    <div id="logContainer" class="log-container"></div>
+                </div>
+                <div class="mt-3 text-center text-xs text-gray-400">
+                    <p>星途科技 © 2026 | Q群: 950916255</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="copy-toast" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg opacity-0 transition-opacity duration-300 z-50 pointer-events-none"></div>
+
+    <script>
+        // ==================== 全局变量 ====================
+        let port = null;
+        let reader = null;
+        let writer = null;
+        let keepReading = false;
+        let isFlashing = false;
+        let responseBuffer = '';
+        let autoReconnectTimer = null;
+        let isManualDisconnect = false;
+        let readStreamActive = false;
+
+        // DOM 元素
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const flashBtn = document.getElementById('flashBtn');
+        const flashBtnText = document.getElementById('flashBtnText');
+        const customCmdBtn = document.getElementById('customCmdBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const logContainer = document.getElementById('logContainer');
+        const portInfo = document.getElementById('portInfo');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const progressFill = document.getElementById('progressFill');
+        const customCommandPanel = document.getElementById('customCommandPanel');
+        const customCommandInput = document.getElementById('customCommandInput');
+        const sendCustomBtn = document.getElementById('sendCustomBtn');
+        const inMac = document.getElementById('in-mac');
+        const inRaw = document.getElementById('in-raw');
+        
+        const stepCircles = {
+            1: document.getElementById('step1Circle'),
+            2: document.getElementById('step2Circle'),
+            3: document.getElementById('step3Circle'),
+            4: document.getElementById('step4Circle'),
+            5: document.getElementById('step5Circle')
+        };
+
+        // ==================== 辅助函数 ====================
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('copy-toast');
+            toast.textContent = message;
+            toast.style.opacity = 1;
+            toast.style.backgroundColor = isError ? '#ef4444' : '#1f2937';
+            setTimeout(() => toast.style.opacity = 0, 2000);
+        }
+
+        function addLog(message, type = 'info') {
+            // 完全过滤掉发送日志和接收日志
+            if (type === 'send' || type === 'receive') return;
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            // 限制日志数量
+            while (logContainer.children.length > 200) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+
+        function updateConnectionStatus(connected) {
+            if (connected) {
+                statusIndicator.className = 'status-indicator status-connected';
+                statusText.textContent = '已连接';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                customCmdBtn.disabled = false;
+                if (!isFlashing) flashBtn.disabled = false;
+                portInfo.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>已连接 (115200)';
+            } else {
+                statusIndicator.className = 'status-indicator status-disconnected';
+                statusText.textContent = '未连接';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                customCmdBtn.disabled = true;
+                flashBtn.disabled = true;
+                portInfo.innerHTML = '<i class="fas fa-info-circle mr-1"></i>点击连接，选择串口设备';
+            }
+        }
+
+        function setFlashButtonState(state) {
+            flashBtn.className = `w-full text-white py-3 rounded-lg font-bold text-lg mb-2 transition-all flex items-center justify-center shadow-md`;
+            if (state === 'success') {
+                flashBtn.classList.add('btn-flash-success');
+                flashBtnText.textContent = '✅ 烧录成功';
+            } else if (state === 'error') {
+                flashBtn.classList.add('btn-flash-error');
+                flashBtnText.textContent = '❌ 烧录失败';
+            } else {
+                flashBtn.classList.add('btn-flash-idle');
+                flashBtnText.textContent = '⚡ 一键智能烧录 ⚡';
+            }
+        }
+
+        function updateProgress(percentage) {
+            progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+        }
+
+        function updateStep(step, status) {
+            for (let i = 1; i <= 5; i++) {
+                const circle = stepCircles[i];
+                circle.classList.remove('active', 'completed', 'error');
+                if (i < step) circle.classList.add('completed');
+                else if (i === step && status === 'active') circle.classList.add('active');
+                else if (i === step && status === 'error') circle.classList.add('error');
+                else if (i === step && status === 'completed') circle.classList.add('completed');
+            }
+        }
+
+        function resetAllSteps() {
+            for (let i = 1; i <= 5; i++) stepCircles[i].classList.remove('active', 'completed', 'error');
+            updateProgress(0);
+            setFlashButtonState('idle');
+        }
+
+        function cleanRawData(raw) {
+            let cleaned = raw.replace(/\s/g, '').replace(/O/g, '0');
+            if (cleaned.toLowerCase().startsWith('0x')) cleaned = cleaned.substring(2);
+            cleaned = cleaned.replace(/[^0-9A-Fa-f]/g, '');
+            return cleaned.toUpperCase();
+        }
+
+        function isValidRaw(raw) {
+            return raw.length > 0 && raw.length % 2 === 0 && raw.length <= 124 && /^[0-9A-Fa-f]*$/.test(raw);
+        }
+
+        function generateCommands(rawData, macData) {
+            let testData = [];
+            for (let k = 0; k < 20; k++) testData[k] = [];
+            let rawSize = rawData.length / 2;
+            for (let i = 0; i < rawSize; i++) testData[0][i] = parseInt(rawData.substr(2 * i, 2), 16);
+            let packetNum = 0;
+            for (let j = 0; j < rawSize; j++) {
+                let tempLen = testData[0][j];
+                for (let jj = 0; jj < (tempLen + 1); jj++) {
+                    testData[1 + packetNum][jj] = testData[0][j];
+                    j++;
+                }
+                j--;
+                packetNum++;
+            }
+            if (packetNum < 2) throw new Error("数据包数量错误");
+            let advPktString = "", advPktLen = 0, advPktNum = 0;
+            for (let s = 0; s < (packetNum - 1); s++) {
+                advPktLen += (testData[1 + s][0] + 1);
+                if (advPktLen > 31) break;
+                for (let jj = 0; jj < (testData[1 + s][0] + 1); jj++) {
+                    advPktString += testData[1 + s][jj].toString(16).padStart(2, '0').toUpperCase();
+                }
+                advPktNum++;
+            }
+            let scanPktString = "", scanPktLen = 0;
+            for (let s = advPktNum; s < packetNum; s++) {
+                scanPktLen += (testData[1 + s][0] + 1);
+                if (scanPktLen > 31) break;
+                for (let jj = 0; jj < (testData[1 + s][0] + 1); jj++) {
+                    scanPktString += testData[1 + s][jj].toString(16).padStart(2, '0').toUpperCase();
+                }
+            }
+            return { adv: advPktString, scan: scanPktString, mac: macData };
+        }
+
+        window.clearRawField = () => { inRaw.value = ''; showToast('已清空RAW数据'); };
+
+        // ==================== 串口通信 ====================
+        
+        function clearResponseBuffer() {
+            responseBuffer = '';
+        }
+        
+        function waitForResponse(timeout = 5000) {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                const checkInterval = setInterval(() => {
+                    const upperBuffer = responseBuffer.toUpperCase();
+                    if (upperBuffer.includes('OK')) {
+                        clearInterval(checkInterval);
+                        resolve(true);
+                    } else if (upperBuffer.includes('ERROR')) {
+                        clearInterval(checkInterval);
+                        reject(new Error('设备返回ERROR'));
+                    } else if (Date.now() - startTime > timeout) {
+                        clearInterval(checkInterval);
+                        reject(new Error('超时无响应'));
+                    }
+                }, 50);
+            });
+        }
+        
+        async function sendCommand(command, timeout = 5000) {
+            if (!port || !port.writable) {
+                throw new Error('串口未连接');
+            }
+            
+            clearResponseBuffer();
+            
+            const encoder = new TextEncoder();
+            const writer = port.writable.getWriter();
+            const fullCommand = command.endsWith('\r\n') ? command : command + '\r\n';
+            await writer.write(encoder.encode(fullCommand));
+            writer.releaseLock();
+            
+            await waitForResponse(timeout);
+            return true;
+        }
+        
+        async function sendCommandWithRetry(command, maxRetries = 3, timeout = 5000) {
+            let lastError;
+            for (let i = 1; i <= maxRetries; i++) {
+                try {
+                    await sendCommand(command, timeout);
+                    return true;
+                } catch (err) {
+                    lastError = err;
+                    if (i < maxRetries) {
+                        await new Promise(r => setTimeout(r, 1000));
+                        clearResponseBuffer();
+                    }
+                }
+            }
+            throw lastError || new Error(`命令失败: ${command}`);
+        }
+
+        async function readFromPortContinuously() {
+            if (!port || !port.readable || readStreamActive) return;
+            readStreamActive = true;
+            
+            try {
+                reader = port.readable.getReader();
+                let buffer = '';
+                
+                while (keepReading && port && port.readable) {
+                    try {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        
+                        const text = new TextDecoder().decode(value);
+                        buffer += text;
+                        
+                        let lines = buffer.split(/\r\n|\r|\n/);
+                        buffer = lines.pop() || '';
+                        
+                        for (let line of lines) {
+                            if (line.trim()) {
+                                const trimmedLine = line.trim();
+                                responseBuffer += trimmedLine + '\n';
+                            }
+                        }
+                    } catch (err) {
+                        if (keepReading && port && !isManualDisconnect) {
+                            // 静默处理，不显示日志
+                        }
+                        break;
+                    }
+                }
+            } catch (err) {
+                // 静默处理
+            } finally {
+                if (reader) {
+                    try { reader.releaseLock(); } catch(e) {}
+                    reader = null;
+                }
+                readStreamActive = false;
+            }
+        }
+
+        async function closeSerialPortGracefully() {
+            keepReading = false;
+            isManualDisconnect = true;
+            readStreamActive = false;
+            
+            if (reader) {
+                try { 
+                    await reader.cancel(); 
+                    reader.releaseLock(); 
+                } catch(e) {}
+                reader = null;
+            }
+            if (writer) {
+                try { writer.releaseLock(); } catch(e) {}
+                writer = null;
+            }
+            if (port) {
+                try { 
+                    await port.close(); 
+                } catch(e) {}
+                port = null;
+            }
+            clearResponseBuffer();
+            setTimeout(() => { isManualDisconnect = false; }, 200);
+        }
+
+        async function attemptAutoReconnect() {
+            if (isManualDisconnect || port || autoReconnectTimer) return;
+            
+            addLog('🔌 检测到设备断开，尝试自动重连...', 'info');
+            
+            autoReconnectTimer = setTimeout(async () => {
+                autoReconnectTimer = null;
+                if (port || isManualDisconnect) return;
+                
+                try {
+                    const ports = await navigator.serial.getPorts();
+                    if (ports.length > 0) {
+                        const existingPort = ports[0];
+                        await existingPort.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+                        port = existingPort;
+                        keepReading = true;
+                        isManualDisconnect = false;
+                        clearResponseBuffer();
+                        readFromPortContinuously();
+                        updateConnectionStatus(true);
+                        addLog('✅ 自动重连成功！', 'success');
+                        showToast('设备已自动重连');
+                        resetAllSteps();
+                    } else {
+                        addLog('⚠️ 未找到可重连的设备，请手动点击连接', 'warning');
+                    }
+                } catch (err) {
+                    addLog(`⚠️ 自动重连失败: ${err.message}，请手动连接`, 'warning');
+                }
+            }, 500);
+        }
+
+        function setupPortDisconnectListener() {
+            if ('serial' in navigator && navigator.serial.addEventListener) {
+                navigator.serial.addEventListener('disconnect', (event) => {
+                    if (port && !isManualDisconnect) {
+                        addLog('⚠️ 检测到设备拔出，正在清理连接...', 'warning');
+                        keepReading = false;
+                        if (reader) { try { reader.cancel(); } catch(e) {} }
+                        if (port) { try { port.close(); } catch(e) {} }
+                        port = null;
+                        updateConnectionStatus(false);
+                        attemptAutoReconnect();
+                    }
+                });
+                
+                navigator.serial.addEventListener('connect', (event) => {
+                    if (!port && !isManualDisconnect) {
+                        addLog('🔌 检测到新设备插入，尝试连接...', 'info');
+                        setTimeout(() => attemptAutoReconnect(), 300);
+                    }
+                });
+            }
+        }
+
+        // ==================== 一键烧录流程（简洁日志版）====================
+        async function autoFlash() {
+            if (isFlashing || !port) return;
+            isFlashing = true;
+            flashBtn.disabled = true;
+            setFlashButtonState('idle');
+            resetAllSteps();
+            
+            try {
+                // 步骤1
+                updateStep(1, 'active');
+                await sendCommandWithRetry('AT+ROLE=2', 2, 4000);
+                addLog('✅ 步骤1 成功', 'success');
+                updateStep(1, 'completed');
+                updateProgress(20);
+                await new Promise(r => setTimeout(r, 300));
+                
+                // 步骤2
+                updateStep(2, 'active');
+                let mac = inMac.value.trim() || '30:AE:A4:A0:E2:7D';
+                mac = mac.replace(/[:\-\s]/g, '').toUpperCase();
+                if (!/^[0-9A-F]{12}$/.test(mac)) throw new Error('MAC地址格式错误');
+                addLog('✅ 步骤2 成功', 'success');
+                updateStep(2, 'completed');
+                updateProgress(40);
+                await new Promise(r => setTimeout(r, 200));
+                
+                // 步骤3
+                updateStep(3, 'active');
+                let rawData = inRaw.value.trim();
+                if (!rawData) throw new Error('RAW数据不能为空');
+                rawData = cleanRawData(rawData);
+                addLog('✅ 步骤3 成功', 'success');
+                updateStep(3, 'completed');
+                updateProgress(60);
+                await new Promise(r => setTimeout(r, 200));
+                
+                // 步骤4
+                updateStep(4, 'active');
+                if (!isValidRaw(rawData)) throw new Error('RAW数据格式错误');
+                const commands = generateCommands(rawData, mac);
+                addLog('✅ 步骤4 成功', 'success');
+                updateStep(4, 'completed');
+                updateProgress(75);
+                await new Promise(r => setTimeout(r, 300));
+                
+                // 步骤5 - 执行三条烧录命令
+                updateStep(5, 'active');
+                
+                await new Promise(r => setTimeout(r, 300));
+                await sendCommandWithRetry('AT+ADVPKT=' + commands.adv, 3, 6000);
+                updateProgress(85);
+                await new Promise(r => setTimeout(r, 200));
+                
+                await sendCommandWithRetry('AT+SCANRES=' + commands.scan, 3, 6000);
+                updateProgress(92);
+                await new Promise(r => setTimeout(r, 200));
+                
+                await sendCommandWithRetry('AT+MAC=' + commands.mac, 3, 6000);
+                updateProgress(100);
+                updateStep(5, 'completed');
+                
+                addLog('✅ 步骤5 成功', 'success');
+                addLog('🎉 一键烧录成功完成！', 'success');
+                setFlashButtonState('success');
+                showToast('烧录成功');
+            } catch (err) {
+                addLog(`❌ 烧录失败: ${err.message}`, 'error');
+                setFlashButtonState('error');
+                showToast(`失败: ${err.message}`, true);
+            } finally {
+                isFlashing = false;
+                if (port) flashBtn.disabled = false;
+                else flashBtn.disabled = true;
+            }
+        }
+
+        // ==================== 事件绑定 ====================
+        connectBtn.addEventListener('click', async () => {
+            if (port) { showToast('已有连接，请先断开', true); return; }
+            try {
+                const selectedPort = await navigator.serial.requestPort();
+                if (!selectedPort) return;
+                await selectedPort.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+                port = selectedPort;
+                keepReading = true;
+                isManualDisconnect = false;
+                clearResponseBuffer();
+                readFromPortContinuously();
+                updateConnectionStatus(true);
+                resetAllSteps();
+                addLog('✅ 串口已连接', 'success');
+            } catch (err) {
+                if (err.message !== 'No port selected by the user') {
+                    addLog(`❌ 连接失败: ${err.message}`, 'error');
+                }
+                if (port) { try { await port.close(); } catch(e) {} port = null; }
+                updateConnectionStatus(false);
+            }
+        });
+
+        disconnectBtn.addEventListener('click', async () => {
+            if (!port) return;
+            addLog('🔌 正在断开串口...', 'info');
+            await closeSerialPortGracefully();
+            updateConnectionStatus(false);
+            resetAllSteps();
+            addLog('✅ 串口已断开', 'success');
+        });
+
+        flashBtn.addEventListener('click', autoFlash);
+
+        customCmdBtn.addEventListener('click', () => {
+            customCommandPanel.classList.toggle('hidden');
+            if (!customCommandPanel.classList.contains('hidden')) customCommandInput.focus();
+        });
+
+        sendCustomBtn.addEventListener('click', async () => {
+            const cmd = customCommandInput.value.trim();
+            if (!cmd) { showToast('请输入命令', true); return; }
+            if (!port) { showToast('未连接', true); return; }
+            try {
+                await sendCommandWithRetry(cmd, 2, 5000);
+                addLog(`✅ 命令执行成功`, 'success');
+            } catch (err) {
+                addLog(`❌ 命令执行失败: ${err.message}`, 'error');
+            }
+            customCommandInput.value = '';
+            customCommandPanel.classList.add('hidden');
+        });
+
+        clearLogBtn.addEventListener('click', () => {
+            logContainer.innerHTML = '';
+            addLog('📋 日志已清除', 'info');
+        });
+
+        if (!('serial' in navigator)) {
+            addLog('❌ 当前浏览器不支持 Web Serial API，请使用 Chrome/Edge 等', 'error');
+            connectBtn.disabled = true;
+        } else {
+            addLog('✅ 工具已就绪', 'info');
+            setupPortDisconnectListener();
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (port) {
+                keepReading = false;
+                if (reader) try { reader.cancel(); } catch(e) {}
+                if (port) try { port.close(); } catch(e) {}
+            }
+        });
+    </script>
+</body>
+</html>
